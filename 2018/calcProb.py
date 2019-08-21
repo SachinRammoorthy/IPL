@@ -1,21 +1,28 @@
 import csv
 import os
 import math
-import mysql.connector
 import requests
 import json
+import sqlite3
+import ast
 
-mydb = mysql.connector.connect(
-  host="localhost",
-  user="root",
-  passwd="password",
-  database="mydatabase"
-)
 
-c = mydb.cursor()
+conn = sqlite3.connect('/Users/sachin_rammoorthy/Downloads/ipl_csv/playerratings.db')
+c = conn.cursor()
 
-#conn = sqlite3.connect('/Users/sachin_rammoorthy/Downloads/ipl_csv/playerratings.db')
+playerRatingsBatsmen = []
+playerRatingsBowlers = []
+
+c.execute('SELECT ratings FROM playerRatings')
+for row in c:
+    someArray = ast.literal_eval(str(row)[3:-3])
+    playerRatingsBatsmen.append(someArray[0])
+    playerRatingsBowlers.append(someArray[1])
+
 #c = conn.cursor()
+
+
+
 
 def getTeam(matchNumber, year, i):
     if len(matchNumber)<2:
@@ -32,7 +39,7 @@ def getTeamPlayers(matchNumber, year, j):
     link = "http://datacdn.iplt20.com/dynamic/data/core/cricket/2012/ipl" + year + '/ipl' + year + '-' + matchNumber + "/scoring.js"
     f = requests.get(link)
     f = f.text[10:-2]
-    print(link)
+
     fjson = json.loads(f)
     i=0;
     teamPlayers = []
@@ -52,11 +59,11 @@ def getTeamPlayers(matchNumber, year, j):
         i+=1
     return teamPlayers
 
-
 def calculateProbability(rating1, rating2):
     return 1.0 * 1.0 / (1 + 1.0 * math.pow(10, 1.0 * (rating1 - rating2) / 400))
 
 def calculateElo(batsman, bowler, event):
+    global playerRatingsBatsmen, playerRatingsBowlers
     if (batsman == "RG Sharma") or (batsman == "AB de Villiers") or (batsman == "C de Grandhomme") or (batsman == "Q de Kock"):
         batsman = batsman
     else:
@@ -76,33 +83,53 @@ def calculateElo(batsman, bowler, event):
     if len(bowlerArr)>1:
         bowler = bowlerArr[0] + " " + bowlerArr[1]
 
-    c.execute("SELECT batsmanName, eloRating, ballsFaced FROM batsmanRatings WHERE batsmanName=%s", (batsman, ))
-    for row in c:
-        batsman, oldBatsmanRating, ballsFaced = row
-        break
-    else:
-        c.execute("INSERT INTO batsmanRatings VALUES ('" + batsman + "',1500,0)")
-        oldBatsmanRating = 1500
-        ballsFaced = 0;
+    oldBatsmanRating = 1500
+    ballsFaced = 0
+    existsBatsman = False
 
-    c.execute("SELECT bowlerName, eloRating, ballsBowled FROM bowlerRatings WHERE bowlerName=%s", (bowler, ))
-    for row in c:
-        bowler, oldBowlerRating, ballsBowled = row
-        break
-    else:
-        c.execute("INSERT INTO bowlerRatings VALUES ('" + bowler + "',1500,0)")
-        oldBowlerRating = 1500
-        ballsBowled = 0
+    cBatsman = 0
+    cBowler = 0
+    batsmanIndex = 0
+    bowlerIndex = 0
 
-    pbatsman = calculateProbability(oldBowlerRating, oldBatsmanRating)
-    pbowler = calculateProbability(oldBatsmanRating, oldBowlerRating)
+    for i in playerRatingsBatsmen:
+        if batsman in i:
+            row = i
+            batsmanIndex = cBatsman
+            oldBatsmanRating = float(row[1])
+            ballsFaced = int(row[2])
+            existsBatsman = True
+        cBatsman = cBatsman + 1
+
+
+    if existsBatsman == False:
+        playerRatingsBatsmen.append([batsman, str(oldBatsmanRating), str(ballsFaced)])
+
+    oldBowlerRating = 1500
+    ballsBowled = 0
+    existsBowler = False
+
+    for i in playerRatingsBowlers:
+        if bowler in i:
+            row = i
+            bowlerIndex = cBowler
+            oldBowlerRating = float(row[1])
+            ballsBowled = int(row[2])
+            existsBowler = True
+        cBowler = cBowler + 1
+
+    if existsBowler == False:
+        playerRatingsBowlers.append([bowler, str(oldBowlerRating), str(ballsBowled)])
+
+    pbatsman = calculateProbability((oldBowlerRating), (oldBatsmanRating))
+    pbowler = calculateProbability((oldBatsmanRating), (oldBowlerRating))
 
     if event == "out":
         result = 0
     elif event == "0":
-        result = 0.2
+        result = 0.25
     elif event == "1":
-        result = 0.45
+        result = 0.47
     elif event == "2":
         result = 0.67
     elif event == "3":
@@ -114,15 +141,29 @@ def calculateElo(batsman, bowler, event):
     else:
         result = 0.5
 
-    batsmanRating = oldBatsmanRating + 6 * (result - pbatsman)
-    bowlerRating = oldBowlerRating + 6 * ((1 - result) - pbowler)
+    batsmanRating = (oldBatsmanRating) + 10 * (result - pbatsman)
+    bowlerRating = (oldBowlerRating) + 10 * ((1 - result) - pbowler)
 
     #print("Old ratings > " + batsman + ": " + str(oldBatsmanRating) + ", " + bowler + ": " + str(oldBowlerRating) +
     #        "\nNew ratings > " + batsman + ": " + str(batsmanRating) + ", " + bowler + ": " + str(bowlerRating) + "\n\n")
 
-    c.execute("""UPDATE batsmanRatings SET eloRating = %s, ballsFaced = %s WHERE batsmanName= %s """, (batsmanRating, ballsFaced + 1, batsman))
-    c.execute("""UPDATE bowlerRatings SET eloRating = %s, ballsBowled = %s WHERE bowlerName= %s """, (bowlerRating, ballsBowled + 1, bowler))
+    #c.execute("""UPDATE batsmanRatings SET eloRating = %s, ballsFaced = %s WHERE batsmanName= %s """, (batsmanRating, ballsFaced + 1, batsman))
+    #c.execute("""UPDATE bowlerRatings SET eloRating = %s, ballsBowled = %s WHERE bowlerName= %s """, (bowlerRating, ballsBowled + 1, bowler))
+    #[w.replace(batsman + "," + str(oldBatsmanRating) + "," + str(ballsFaced), batsman + "," + str(batsmanRating) + "," + str(ballsFaced)) for w in playerRatingsBatsmen]
+    ballsFaced = ballsFaced + 1
+    ballsBowled = ballsBowled + 1
+    
+    
+    for i in playerRatingsBatsmen:
+        if batsman in i:
+            playerRatingsBatsmen.remove(i)
 
+    for i in playerRatingsBowlers:
+        if bowler in i:
+            playerRatingsBowlers.remove(i)
+
+    playerRatingsBatsmen.append([batsman, str(batsmanRating), str(ballsFaced)])
+    playerRatingsBowlers.append([bowler, str(bowlerRating), str(ballsBowled)])
 #Bowler has to have bowled 300 balls
 #Batting rating is aggregate of top 6 batsmen
 def calculateTeamRating(teamPlayers):
@@ -130,29 +171,42 @@ def calculateTeamRating(teamPlayers):
     bowlersRatings = []
 
     for player in teamPlayers:
-        c.execute("SELECT batsmanName, eloRating, ballsFaced FROM batsmanRatings WHERE batsmanName=%s", (player, ))
-        for row in c:
-            player, battingRating, ballsFaced = row
-            break
-        else:
-            c.execute("INSERT INTO batsmanRatings VALUES ('" + player + "',1500,0)")
-            battingRating = 1500
-            ballsFaced = 0;
 
-        c.execute("SELECT bowlerName, eloRating, ballsBowled FROM bowlerRatings WHERE bowlerName=%s", (player, ))
-        for row in c:
-            bowler, bowlerRating, ballsBowled = row
-            break
-        else:
-            c.execute("INSERT INTO bowlerRatings VALUES ('" + player + "',1500,0)")
-            bowlerRating = 1500
-            ballsBowled = 0
-        batsmenRatings.append(battingRating)
-        bowlersRatings.append(bowlerRating)
+        oldBatsmanRating = 1500
+        ballsFaced = 0
+        existsBatsman = False
 
+        for i in playerRatingsBatsmen:
+            if player in i:
+                row = i
+                oldBatsmanRating = float(row[1])
+                batsmenRatings.append(oldBatsmanRating)
+                existsBatsman = True
+
+        if existsBatsman == False:
+            playerRatingsBatsmen.append([player, str(oldBatsmanRating), str(ballsFaced)])
+
+        oldBowlerRating = 1500
+        ballsBowled = 0
+        existsBowler = False
+
+        for i in playerRatingsBowlers:
+            if player in i:
+                row = i
+                oldBowlerRating = float(row[1])
+                bowlersRatings.append(oldBowlerRating)
+                existsBowler = True
+
+        if existsBowler == False:
+            playerRatingsBowlers.append([player, str(oldBowlerRating), str(ballsBowled)])
+
+    for i in range(0, len(batsmenRatings)):
+        batsmenRatings[i] = int(batsmenRatings[i])
+    for i in range(0, len(bowlersRatings)):
+        bowlersRatings[i] = int(bowlersRatings[i])
     batsmenRatings.sort(reverse = True)
     bowlersRatings.sort(reverse = True)
-    teamRating = ((sum(bowlersRatings[:6]) /6) + (sum(batsmenRatings[:6]) /6))/2
+    teamRating = (float(sum(bowlersRatings[:3]))*0.25 + float(sum(bowlersRatings[3:5]))*0.125 + float(sum(batsmenRatings[:3]))*0.25 + float(sum(batsmenRatings[3:5]))*0.125 )/2
     return teamRating
 
 def predictOutcome(matchNumber, year, actual):
@@ -160,9 +214,6 @@ def predictOutcome(matchNumber, year, actual):
         matchNumber = "0" + matchNumber
     teamOneRating = calculateTeamRating(getTeamPlayers(matchNumber, year, 0))
     teamTwoRating = calculateTeamRating(getTeamPlayers(matchNumber, year, 1))
-    #print(str(teamOneRating))
-    #print(str(teamTwoRating))
-    #print(str(calculateProbability(teamTwoRating, teamOneRating)))
     predictedTeam = "";
     predictionProb = 0;
     if calculateProbability(teamTwoRating, teamOneRating) > 0.5:
@@ -198,7 +249,7 @@ def updateElo(filename):
         os.remove(filename_output + '.csv')
 
 
-print("2018 predictions based on previous years (and 2018 previous games):\n\n")
+print("\n\n2018:\n\n")
 #for each file, get match number and year and input
 for filename in os.listdir("/Users/sachin_rammoorthy/Downloads/ipl_csv/2018"):
     matchNumber = "Nope"
@@ -223,8 +274,14 @@ for filename in os.listdir("/Users/sachin_rammoorthy/Downloads/ipl_csv/2018"):
     elif "Kolk" in actual: actual = "KKR"
     elif "King" in actual: actual = "KXIP"
     elif "Mumb" in actual: actual = "MI"
-    elif "Decc" in actual: actual = "DC"
-    elif "Del" in actual: actual = "DD"
+    elif "Decc" in actual: actual = "SRH"
+    elif "Dared" in actual: actual = "DD"
+    elif "Capit" in actual: actual = "DC"
+    elif "Keral" in actual: actual = "KTK"
+    elif "Warri" in actual: actual = "PWI"
+    elif "Sunri" in actual: actual = "SRH"
+    elif "Superg" in actual: actual = "RPS"
+    elif "Gujara" in actual: actual = "GL"
     else: actual = "Nat vurking"
 
     if matchNumber != "Nope":
@@ -233,4 +290,7 @@ for filename in os.listdir("/Users/sachin_rammoorthy/Downloads/ipl_csv/2018"):
         updateElo(filename + '.csv')
 
 
-c.close()
+c.execute("UPDATE playerRatings SET ratings=?", ((str(playerRatingsBatsmen) + "," + str(playerRatingsBowlers)), ))
+
+conn.commit()
+conn.close()
